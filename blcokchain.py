@@ -1,9 +1,10 @@
 """This python file contains the blockchain class to create new blocks transactions and do hashing of the blocks"""
 import hashlib
 import json
+from cgitb import reset
 from time import time
 from uuid import uuid4
-from flask import Flask
+from flask import Flask, jsonify
 from textwrap import dedent
 
 
@@ -91,3 +92,31 @@ class BlockChain(object):
         guess = f'{last_proof}{proof}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == '0000'
+
+#Intiation of our Node
+app = Flask(__name__)
+
+#Generate a globally unique address for this node
+node_identifier = str(uuid4()).replace('-', '')
+
+#Intiation of blockchain
+blockchain = BlockChain()
+
+@app.route('/mine', methods=['GET'])
+def mine():
+    return "We will mine a new block"
+
+@app.route('/transactions/new', methods=['POST'])
+def transactions():
+    return "Addition of new Transaction"
+
+@app.route('/chain', methods=['GET'])
+def full_chain():
+    response = {
+        'chain': blockchain.chain,
+        'length': len(blockchain.chain),
+    }
+    return jsonify(response), 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
