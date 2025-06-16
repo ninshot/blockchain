@@ -1,11 +1,17 @@
 """This python file contains the blockchain class to create new blocks transactions and do hashing of the blocks"""
-from datetime import time
+import hashlib
+import json
+from time import time
+from uuid import uuid4
+from flask import Flask
+from textwrap import dedent
 
 
 class BlockChain(object):
     def __init__(self):
         self.chain = []
         self.current_transactions = []
+        self.new_block(previous_hash=1, proof=100)
 
 
     def new_block(self, proof, previous_hash=None):
@@ -43,11 +49,45 @@ class BlockChain(object):
 
         return self.last_block['index'] + 1
 
-    # a method used for hashing a block
+
     @staticmethod
     def hash(block):
-        pass
+        """
+        Creates a SHA-256 hash of a block
+        :param block: <dict> Block
+        :return: <str> SHA-256 hash
+        """
+        block_string = json.dumps(block, sort_keys=True).encode()
+        return hashlib.sha256(block_string).hexdigest()
 
-    #Returns the last block of the blocks
+    @property
     def last_block(self):
-        pass
+        return self.chain[-1]
+
+    def proof_of_work(self, last_proof):
+        """
+        Simple Proof of Work Algorithm :
+        -Finds a number p' such that hash(pp') contains leading 4 zeroes, where
+        - p is the previous proof, and p' is the new proof
+        :param last_proof: <int> Last proof given by the proof of work
+        :return: <int> New proof given by the proof of work
+        """
+
+        proof = 0
+        while self.validproof(last_proof, proof) is False:
+            proof += 1
+
+        return proof
+
+    @staticmethod
+    def valid_proof(last_proof, proof):
+        """
+        Validates the proof: Does hash(last_proof, proof) contain leading 4 zeroes?
+        :param last_proof: <int> Previous proof
+        :param proof: <int> current proof
+        :return: <bool> True if correct, False otherwise
+        """
+
+        guess = f'{last_proof}{proof}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:4] == '0000'
