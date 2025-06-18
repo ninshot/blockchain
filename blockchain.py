@@ -4,9 +4,11 @@ import json
 from time import time
 from urllib.parse import urlparse
 import httpx
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
+import binascii
 
+from api import private_key
 
 
 class BlockChain(object):
@@ -37,7 +39,7 @@ class BlockChain(object):
         return block
 
 
-    def new_transaction(self, sender, recipient, amount):
+    def new_transaction(self, sender, recipient, amount, signature):
         """
         Creates a new transaction to go into the next mined block
         :param sender: <str> sender's address'
@@ -49,10 +51,21 @@ class BlockChain(object):
             'sender': sender,
             'recipient': recipient,
             'amount': amount,
+            'signature' : signature
         })
 
         return self.last_block['index'] + 1
 
+    def get_transaction(self, recipient):
+        """
+        Used to get a particular transaction send to a recipent
+        :param recipient: <str> recipient address
+        :return: <dict> the transaction
+        """
+
+        for transaction in self.current_transactions:
+            if transaction['recipient'] == recipient:
+                return transaction
 
     @staticmethod
     def hash(block):
@@ -187,5 +200,52 @@ class BlockChain(object):
                     encryption_algorithm=serialization.NoEncryption()).decode('utf-8')
 
         return public_pem, private_pem
+
+    @staticmethod
+    def sign_transaction(priavte_key:str, transaction: dict) -> str:
+        """
+            This function is used to sign a transaction
+            @param priavte_key: <str> Private key
+            @param transaction: <dict> Transaction with sender, recipent and the amount
+            :return: <str> Transaction signature
+        """
+
+        key = serialization.load_pem_private_key(priavte_key.encode(),
+                password=None)
+
+        """
+        This block of code basically creates the signature by breaking down the transaction dict into
+        JSON formatted string, and then encoding it into bytes, then adds the PSS pading for extra security to the key,
+        so that it cant be decrypted easily and hashes it in SHA-256 hash internally.
+        """
+        signature = key.sign(json.dumps(transaction, sort_keys=True).encode(),
+                             padding.PKCS1v15(),
+                             hashes.SHA256()
+                             )
+
+        return signature.hex()
+
+    @staticmethod
+    def verify_transaction(public_key:str, transaction:dict, signature: str) -> bool:
+        """
+        This function is used to verify a transaction
+        :param public_key: PEM encoded public key
+        :param transaction: dict with a sender, recipent and the amount
+        :param signature: hex encoded signature
+        :return: true if the transaction is valid, false otherwise
+        """
+
+        try:
+            public_key = serialization.load_pem_public_key(public_key.encode())
+            public_key.verify(bytes.fromhex(signature),
+                              json.dumps(transaction, sort_keys=True).encode(),
+                              padding.PKCS1v15(),
+                              hashes.SHA256()
+                              )
+            return True
+
+        except Exception as e:
+            print(f'Exception: {e}')
+            return False
 
 

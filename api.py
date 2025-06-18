@@ -12,7 +12,7 @@ app = FastAPI()
 blockchain = BlockChain()
 
 private_key, node_identifier = blockchain.create_wallets()
-print("This is the wallet publci key:\n", node_identifier)
+print("This is the wallet pubic key:\n", node_identifier)
 
 
 #endpoints
