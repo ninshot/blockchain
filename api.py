@@ -2,7 +2,7 @@
 This file contains the api endpoints build using REST through Fastapi
 
 """
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI,HTTPException
 from fastapi.responses import JSONResponse
 from blockchain import BlockChain
 #Intiation of our Node
@@ -11,8 +11,9 @@ app = FastAPI()
 #Intiation of blockchain
 blockchain = BlockChain()
 
-private_key, node_identifier = blockchain.create_wallets()
+node_identifier, private_key = blockchain.create_wallets()
 print("This is the wallet pubic key:\n", node_identifier)
+wallets = list(blockchain.get_wallets().keys())[0]
 
 
 #endpoints
@@ -27,7 +28,9 @@ async def mine():
         sender="0",
         recipient=node_identifier,
         amount=1,
+        signature=None
     )
+
     previous_hash = blockchain.hash(last_block)
     block = blockchain.new_block(proof, previous_hash)
     response = {
@@ -45,17 +48,28 @@ async def new_transaction(request):
     #Check that the required values are present in the POST'ed Data
     required = ['sender', 'recipient', 'amount']
     if not all (k in data for k in required):
-        return JSONResponse("Missing Values",status_code=400)
+        return JSONResponse(content={"error" : "Missing Values"},status_code=400)
 
-    #Creation of new transaction
-    index = blockchain.new_transaction(data['sender'], data['recipient'], data['amount'])
+    new_transaction = {
+        'sender': data['sender'],
+        'recipient': data['recipient'],
+        'amount': data['amount'],
+    }
 
-    response = {'message': f'Transaction will be added to block {index}'}
+    if not blockchain.verify_transaction(data['sender'], new_transaction, data['signature']):
+        return JSONResponse(content={"error":"Invalid Transaction"},status_code=400)
 
+    index = blockchain.new_transaction({
+        'sender': data['sender'],
+        'recipient': data['recipient'],
+        'amount': data['amount'],
+        'signature': data['signature']
+    })
+    response = {"Message": f"Transaction added to Blockchain {index}"}
     return JSONResponse(response, status_code=200)
 
 @app.get('/chain')
-async def full_chain(request):
+async def full_chain():
     response = {
         'chain': blockchain.chain,
         'length': len(blockchain.chain),
@@ -96,10 +110,27 @@ async def resolve():
 
     return JSONResponse(response, status_code=200)
 
+@app.get('/wallet')
+async def wallet():
+
+    wallets = blockchain.get_wallets()
+
+
+    for i in wallets.keys():
+
+        if i == node_identifier:
+            balance = wallets[i]['balance']
+            transactions = wallets[i]['transactions']
+            response = {"balance": balance,
+                        "transactions": transactions}
+
+            return JSONResponse(response, status_code=200)
+
 @app.get('/')
 async def root():
     return {'message': 'Welcome to Blockchain!'}
 
+
 if __name__ == '__main__':
    import uvicorn
-   uvicorn.run(app, host='0.0.0.0', port=5001)
+   uvicorn.run(app, host='0.0.0.0', port=5002)

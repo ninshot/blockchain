@@ -6,9 +6,7 @@ from urllib.parse import urlparse
 import httpx
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
-import binascii
 
-from api import private_key
 
 
 class BlockChain(object):
@@ -18,6 +16,7 @@ class BlockChain(object):
         self.new_block(previous_hash=1, proof=100)
         self.nodes = set()
         self.wallets = {}
+
 
 
     def new_block(self, proof, previous_hash=None):
@@ -47,12 +46,24 @@ class BlockChain(object):
         :param amount: <int> amount of money
         :return: <int> index of the  block which holds the new transaction
         """
-        self.current_transactions.append({
+        transaction = {
             'sender': sender,
             'recipient': recipient,
             'amount': amount,
             'signature' : signature
-        })
+        }
+        if sender != "0":
+            self.sign_transaction(signature, transaction)
+
+        self.current_transactions.append(transaction)
+
+        if sender in self.wallets:
+            self.wallets[sender]['transactions'].append(transaction)
+            self.wallets[sender]['balance'] -= amount
+
+        if recipient in self.wallets:
+            self.wallets[recipient]['transactions'].append(transaction)
+            self.wallets[recipient]['balance'] += amount
 
         return self.last_block['index'] + 1
 
@@ -199,10 +210,16 @@ class BlockChain(object):
                     format=serialization.PrivateFormat.TraditionalOpenSSL,
                     encryption_algorithm=serialization.NoEncryption()).decode('utf-8')
 
+        self.wallets [public_pem] = {
+            "private_key": private_pem,
+            "transactions" : [],
+            "balance" : 0
+        }
+
         return public_pem, private_pem
 
     @staticmethod
-    def sign_transaction(priavte_key:str, transaction: dict) -> str:
+    def sign_transaction(priavte_key:str,transaction:dict) :
         """
             This function is used to sign a transaction
             @param priavte_key: <str> Private key
@@ -223,7 +240,7 @@ class BlockChain(object):
                              hashes.SHA256()
                              )
 
-        return signature.hex()
+        transaction['signature'] = signature.hex()
 
     @staticmethod
     def verify_transaction(public_key:str, transaction:dict, signature: str) -> bool:
@@ -248,4 +265,10 @@ class BlockChain(object):
             print(f'Exception: {e}')
             return False
 
-
+    def get_wallets(self):
+        """
+        A function used to return wallet info
+        :param public_key: PEM encoded public key
+        :return: the balance of the wallet and transactions
+        """
+        return self.wallets
