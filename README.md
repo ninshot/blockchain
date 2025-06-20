@@ -2,6 +2,11 @@
 
 This project is a blockchain-based application developed using Python and Flask, designed to demonstrate the core principles of blockchain technology.
 
+## 💻 Tech StacK
+**Frontend:** React, TailwindCSS
+**Backend:** Python, FastAPI
+**Database:**mySQL
+
 ## 📦 Block Structure
 
 Each block in the chain follows a structured format like this:
