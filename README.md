@@ -5,7 +5,13 @@ This project is a blockchain-based application developed using Python and Flask,
 ## 💻 Tech StacK
 **Frontend:** React, TailwindCSS
 **Backend:** Python, FastAPI
-**Database:**mySQL
+**Database:** mySQL
+
+## 🪪 Features
+- Creation of using public and private key
+- Mining transactions
+- Sending assests through the blockchain
+- Login/Registration Page
 
 ## 📦 Block Structure
 
