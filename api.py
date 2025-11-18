@@ -146,6 +146,17 @@ async def wallet():
             content={ "status" : "error","message": "Wallet not found"}, status_code=404
         )
 
+    balance = wallet['balance']
+    transactions = wallet['transactions']
+
+    response = {
+        "publicKey": node_identifier,
+        "balance": balance,
+        "transactions": transactions
+    }
+
+    return JSONResponse(content = {"status":"success", "data":response}, status_code=200)
+
 
 @app.get('/')
 async def root():
