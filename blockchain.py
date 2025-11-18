@@ -1,6 +1,8 @@
 """This python file contains the blockchain class to create new blocks transactions and do hashing of the blocks"""
 import hashlib
 import json
+from datetime import datetime
+
 from time import time
 from urllib.parse import urlparse
 import httpx
@@ -28,7 +30,7 @@ class BlockChain(object):
         """
         block={
             'index': len(self.chain) + 1,
-            'timestamp': time(),
+            'timestamp': datetime.utcnow().isoformat(),
             'transactions': self.current_transactions,
             'proof': proof,
             'previous_hash': previous_hash or self.hash(self.chain[-1])
@@ -158,7 +160,7 @@ class BlockChain(object):
 
         return True
 
-    async def resolve_conflicts(self):
+    async def resolve_conflicts(self) -> bool:
         """
         This is our Consensus algorithm. It resolves conflicts
         by replacing our chain with the longest one in the chain.
@@ -173,22 +175,30 @@ class BlockChain(object):
 
         async with httpx.AsyncClient() as client:
             for node in neighbours:
-                try:
-                    url = f'http://{node}/'
-                    response = await client.get(url)
+
+                    url = f'http://{node}/chain'
+                    try:
+                        response = await client.get(url, timeout=5.0)
+
+                    except httpx.RequestError:
+                        continue
+
                     if response.status == 200:
-                        data = await response.json()
-                        length = data['length']
-                        chain = data['chain']
+                        continue
 
-                        if length > max_length and self.valid_chain(chain):
-                            max_length = length
-                            new_chain = chain
-                except Exception as e:
-                    print(f'Exception: {e}')
-                    continue
+                    data = response.json()
+                    length = data.get['length']
+                    chain = data.get['chain']
 
-        if new_chain:
+                    if not isinstance(length, int) or not isinstance(chain, list):
+                        continue
+
+                    if length > max_length and self.valid_chain(chain):
+                        max_length = length
+                        new_chain = chain
+
+
+        if new_chain is not None:
             self.chain = new_chain
             return True
 
@@ -203,12 +213,23 @@ class BlockChain(object):
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         public_key = private_key.public_key()
 
-        public_pem = public_key.public_bytes(encoding=serialization.Encoding.PEM,
+        public_ = public_key.public_bytes(encoding=serialization.Encoding.PEM,
                     format=serialization.PublicFormat.SubjectPublicKeyInfo).decode('utf-8')
 
-        private_pem = private_key.private_bytes(encoding=serialization.Encoding.PEM,
+        private_ = private_key.private_bytes(encoding=serialization.Encoding.PEM,
                     format=serialization.PrivateFormat.TraditionalOpenSSL,
                     encryption_algorithm=serialization.NoEncryption()).decode('utf-8')
+
+        public_pem = public_\
+                .replace("-----BEGIN PUBLIC KEY-----", "")\
+                .replace("-----END PUBLIC KEY-----","")\
+                .replace("\n","")
+
+        private_pem = private_\
+                    .replace("-----BEGIN RSA PRIVATE KEY-----","")\
+                    .replace("-----END RSA PRIVATE KEY-----","")\
+                    .replace("\n","")
+
 
         self.wallets [public_pem] = {
             "private_key": private_pem,
@@ -219,15 +240,15 @@ class BlockChain(object):
         return public_pem, private_pem
 
     @staticmethod
-    def sign_transaction(priavte_key:str,transaction:dict) :
+    def sign_transaction(private_key:str,transaction:dict) :
         """
             This function is used to sign a transaction
-            @param priavte_key: <str> Private key
+            @param private_key: <str> Private key
             @param transaction: <dict> Transaction with sender, recipent and the amount
             :return: <str> Transaction signature
         """
 
-        key = serialization.load_pem_private_key(priavte_key.encode(),
+        key = serialization.load_pem_private_key(private_key.encode(),
                 password=None)
 
         """

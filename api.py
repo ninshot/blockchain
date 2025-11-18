@@ -2,23 +2,46 @@
 This file contains the api endpoints build using REST through Fastapi
 
 """
-from fastapi import FastAPI,HTTPException
+import uuid
+from uuid import uuid4
+from fastapi import FastAPI,HTTPException, Request
 from fastapi.responses import JSONResponse
 from blockchain import BlockChain
+from fastapi.middleware.cors import CORSMiddleware
 #Intiation of our Node
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 #Intiation of blockchain
 blockchain = BlockChain()
 
-node_identifier, private_key = blockchain.create_wallets()
-print("This is the wallet pubic key:\n", node_identifier)
-wallets = list(blockchain.get_wallets().keys())[0]
+@app.post("/wallet/create")
+async def create_wallet():
+    global node_identifier
+    public_key, private_key = blockchain.create_wallets()
+    node_identifier = public_key
+    response = {
+        "data" : {
+            "publicKey" : public_key,
+            "privateKey" : private_key
+        }
+    }
+    return JSONResponse(content={"status" : "success", "data" :response},status_code=200)
 
-
-#endpoints
 @app.get("/mine")
 async def mine():
+    if node_identifier is None:
+        return JSONResponse(
+            content={"status" : "Error", "message" : "No Wallet found"}, status_code=400
+        )
+
     last_block = blockchain.last_block
     last_proof = last_block['proof']
     proof = blockchain.proof_of_work(last_proof)
@@ -43,29 +66,31 @@ async def mine():
     return JSONResponse(response, status_code=200)
 
 @app.post('/new_transaction')
-async def new_transaction(request):
-    data = await request.json
+async def new_transaction(request : Request):
+    data = await request.json()
     #Check that the required values are present in the POST'ed Data
     required = ['sender', 'recipient', 'amount']
     if not all (k in data for k in required):
-        return JSONResponse(content={"error" : "Missing Values"},status_code=400)
+        raise HTTPException(status_code=400,detail="Missing values")
 
     new_transaction = {
         'sender': data['sender'],
         'recipient': data['recipient'],
         'amount': data['amount'],
     }
+    signature = data['signature']
 
-    if not blockchain.verify_transaction(data['sender'], new_transaction, data['signature']):
-        return JSONResponse(content={"error":"Invalid Transaction"},status_code=400)
+    if not blockchain.verify_transaction(data['sender'], new_transaction, signature):
+        raise HTTPException(status_code=400, detail="Invalid transaction")
 
-    index = blockchain.new_transaction({
-        'sender': data['sender'],
-        'recipient': data['recipient'],
-        'amount': data['amount'],
-        'signature': data['signature']
-    })
+    index = blockchain.new_transaction(
+        data['sender'],
+        data['recipient'],
+        data['amount'],
+        signature,
+    )
     response = {"Message": f"Transaction added to Blockchain {index}"}
+
     return JSONResponse(response, status_code=200)
 
 @app.get('/chain')
@@ -96,7 +121,7 @@ async def register_nodes(request):
 
 @app.post('/nodes/resolve')
 async def resolve():
-    replaced = blockchain.resolve_conflicts()
+    replaced = await blockchain.resolve_conflicts()
     if replaced:
         response = {
             'message': 'Longest Chain Updated',
@@ -110,25 +135,22 @@ async def resolve():
 
     return JSONResponse(response, status_code=200)
 
-@app.get('/wallet')
+@app.get('/wallet/details/')
 async def wallet():
 
     wallets = blockchain.get_wallets()
+    wallet = wallets.get(node_identifier)
 
+    if wallet is None:
+        return JSONResponse(
+            content={ "status" : "error","message": "Wallet not found"}, status_code=404
+        )
 
-    for i in wallets.keys():
-
-        if i == node_identifier:
-            balance = wallets[i]['balance']
-            transactions = wallets[i]['transactions']
-            response = {"balance": balance,
-                        "transactions": transactions}
-
-            return JSONResponse(response, status_code=200)
 
 @app.get('/')
 async def root():
     return {'message': 'Welcome to Blockchain!'}
+
 
 
 if __name__ == '__main__':
