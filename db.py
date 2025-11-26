@@ -1,12 +1,12 @@
 from collections.abc import AsyncGenerator
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Float, Integer
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker, AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, relationship
 from datetime import datetime
 
 DATABASE_URL = "sqlite+aiosqlite:///./blockchain.db"
 
-class Base(DeclarativeBase):
+class Base(AsyncAttrs, DeclarativeBase):
     pass
 
 class Block(Base):
@@ -15,7 +15,7 @@ class Block(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     proof = Column(Integer, nullable=False)
     previous_hash = Column(String, nullable=False)
-    transactions = relationship("Transaction", back_populates="block")
+    transactions = relationship("Transaction", back_populates="block",lazy="selectin")
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -26,7 +26,7 @@ class Transaction(Base):
     amount = Column(Float, nullable=False)
     signature = Column(Text, nullable=True)
 
-    block = relationship("Block", back_populates="transactions",)
+    block = relationship("Block", back_populates="transactions")
 
 class Wallet(Base):
     __tablename__ = "wallets"

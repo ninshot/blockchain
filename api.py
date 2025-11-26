@@ -65,65 +65,41 @@ async def mine(
             content={"status" : "Error", "message" : "No Wallet found"}, status_code=400
         )
 
-    result = await session.execute(
-        select(Block).order_by(Block.id.desc()).limit(1)
-    )
+    last_block = await blockchain.last_block(session)
+    if last_block is None:
+        last_proof = 100
+        previous_hash = "1"
+    else:
+        last_proof = last_block['proof']
+        previous_hash = last_block['previous_hash']
 
-    last_block = result.scalar_one_or_none()
-    last_proof = last_block.proof
     proof = blockchain.proof_of_work(last_proof)
 
-    reward = Transaction(
-        block_id= None,
-        sender = "0",
-        recipient = node_identifier,
-        amount = 1,
-        signature = None,
-    )
-    session.add(reward)
-    await session.commit()
-    await session.refresh(reward)
-
-
-    hash_block = {
-        "transactions": {
-            "sender":
-        }
-    }
-    previous_hash = blockchain.hash(last_block)
-    block = blockchain.new_block(proof, previous_hash)
-
-    #Rewareded one coin for mining and sender is 0 which basically the mine itself
-    new_block = Block(
-        proof=proof,
-        previous_hash=previous_hash,
-    )
-    session.add(new_block)
-    await session.commit()
-    await session.refresh(new_block)
-
-    blockchain.new_transaction(
+    await blockchain.new_transaction(
+        session,
         sender="0",
         recipient=node_identifier,
         amount=1,
-        signature=None
+        signature=None,
     )
 
+    block = await blockchain.new_block(session, proof, previous_hash)
 
     response = {
-        'message': 'New Block Forged',
-        'index': block['index'],
-        'transactions': block['transactions'],
-        'proof': block['proof'],
-        'previous_hash': block['previous_hash'],
+        "message": "New Block Forged",
+        "index": block['index'],
+        "transactions": block['transactions'],
+        "proof": block['proof'],
+        "previous_hash": block['previous_hash'],
     }
+
     return JSONResponse(response, status_code=200)
 
 @app.post('/new_transaction')
-async def new_transaction(request : Request):
+async def new_transaction(request : Request, session : AsyncSession = Depends(get_async_session)):
     data = await request.json()
     #Check that the required values are present in the POST'ed Data
-    required = ['sender', 'recipient', 'amount']
+    required = ['sender', 'recipient', 'amount', 'signature']
     if not all (k in data for k in required):
         raise HTTPException(status_code=400,detail="Missing values")
 
@@ -137,54 +113,67 @@ async def new_transaction(request : Request):
     if not blockchain.verify_transaction(data['sender'], new_transaction, signature):
         raise HTTPException(status_code=400, detail="Invalid transaction")
 
-    index = blockchain.new_transaction(
-        data['sender'],
-        data['recipient'],
-        data['amount'],
-        signature,
+    try:
+        index = await blockchain.new_transaction(
+            session,
+            sender = data['sender'],
+            recipient= data['recipient'],
+            amount=data['amount'],
+            signature = signature,
     )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
     response = {"Message": f"Transaction added to Blockchain {index}"}
 
     return JSONResponse(response, status_code=200)
 
 @app.get('/chain')
-async def full_chain():
+async def full_chain(session : AsyncSession = Depends(get_async_session)):
+    chain = await blockchain.get_chain(session)
     response = {
-        'chain': blockchain.chain,
-        'length': len(blockchain.chain),
+        'chain': chain,
+        'length': len(chain),
     }
     return JSONResponse(response, status_code=200)
 
 @app.post('/nodes/register')
-async def register_nodes(request):
+async def register_nodes(request : Request, session : AsyncSession = Depends(get_async_session)):
     values = await request.json()
 
     nodes = values.get('nodes')
-    if nodes is None:
+    if nodes is None or not isinstance(nodes, list):
         return JSONResponse("Error: Please supply a valid list of nodes", status_code=400)
 
     for node in nodes:
-        blockchain.register_node(node)
+        await blockchain.register_node(session,node)
+
+    all_nodes = await blockchain.get_nodes(session)
 
     response = {
         'message': 'New nodes have been added',
-        'total_nodes': list(blockchain.nodes),
+        'total_nodes': all_nodes,
     }
 
     return JSONResponse(response, status_code=200)
 
 @app.post('/nodes/resolve')
-async def resolve():
-    replaced = await blockchain.resolve_conflicts()
+async def resolve(
+        session : AsyncSession = Depends(get_async_session),
+):
+    replaced = await blockchain.resolve_conflicts(session)
+    chain = await blockchain.get_chain(session)
+
     if replaced:
         response = {
             'message': 'Longest Chain Updated',
-            'new_chain': blockchain.chain,
+            'new_chain': chain,
         }
     else:
         response = {
             'message': 'No Longest Chain Available',
-            'chain': blockchain.chain,
+            'chain': chain,
         }
 
     return JSONResponse(response, status_code=200)

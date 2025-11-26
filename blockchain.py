@@ -1,23 +1,27 @@
 """This python file contains the blockchain class to create new blocks transactions and do hashing of the blocks"""
 import hashlib
 import json
-import uuid
-from datetime import datetime
-
+from datetime import datetime, timezone
 from time import time
 from urllib.parse import urlparse
 import httpx
 import pytz
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
-from docutils.nodes import pending
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from api import new_transaction
 from db import Block, Transaction, Wallet, Node
 
+sask_time = pytz.timezone("America/Regina")
 
+def time_format(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local_dt = dt.astimezone(sask_time)
+    return local_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 class BlockChain(object):
     async def get_chain(self, session: AsyncSession) -> list[dict]:
@@ -27,7 +31,7 @@ class BlockChain(object):
         result = await session.execute(select(Block).order_by(Block.id))
         blocks = result.scalars().unique().all()
 
-        chain = list[dict] = []
+        chain: list[dict] = []
 
         for block in blocks:
             transactions = [
@@ -42,7 +46,7 @@ class BlockChain(object):
 
             chain.append({
                 "index" : block.id,
-                "timestamp" : block.timestamp,
+                "timestamp" : time_format(block.timestamp),
                 "transactions" : transactions,
                 "proof": block.proof,
                 "previous_hash": block.previous_hash,
@@ -78,7 +82,10 @@ class BlockChain(object):
 
         return {
             "index" : block.id,
+            "timestamp" : time_format(block.timestamp),
             "transactions" : transactions,
+            "proof" : block.proof,
+            "previous_hash" : block.previous_hash,
         }
 
 
@@ -222,7 +229,11 @@ class BlockChain(object):
             block = Block(
                 proof=block['proof'],
                 previous_hash=block['previous_hash'],
-                timestamp=block['timestamp'],
+                timestamp=datetime.strptime(block['timestamp'], '%Y-%m-%dT%H:%M:%S.%f').replace(
+                    tzinfo=timezone)
+                if block.get('timestamp')
+                else None,
+
             )
             session.add(block)
             await session.flush()
@@ -285,7 +296,7 @@ class BlockChain(object):
 
         return False
 
-    def create_wallets(self) -> tuple(str,str):
+    def create_wallets(self):
         """"
         A function which helps to generate public and private key to create wallets
         """
