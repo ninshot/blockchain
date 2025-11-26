@@ -1,87 +1,125 @@
 """This python file contains the blockchain class to create new blocks transactions and do hashing of the blocks"""
 import hashlib
 import json
+import uuid
 from datetime import datetime
 
 from time import time
 from urllib.parse import urlparse
 import httpx
+import pytz
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
+from docutils.nodes import pending
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api import new_transaction
+from db import Block, Transaction, Wallet, Node
 
 
 
 class BlockChain(object):
-    def __init__(self):
-        self.chain = []
-        self.current_transactions = []
-        self.new_block(previous_hash=1, proof=100)
-        self.nodes = set()
-        self.wallets = {}
+    async def get_chain(self, session: AsyncSession) -> list[dict]:
+        """
+        Returns the full chain which exists in the DB
+        """
+        result = await session.execute(select(Block).order_by(Block.id))
+        blocks = result.scalars().unique().all()
 
+        chain = list[dict] = []
 
+        for block in blocks:
+            transactions = [
+                {
+                    "sender" : t.sender,
+                    "recipent" : t.recipient,
+                    "amount" : t.amount,
+                    "signature": t.signature
+                }
+                for t in block.transactions
+            ]
 
-    def new_block(self, proof, previous_hash=None):
+            chain.append({
+                "index" : block.id,
+                "timestamp" : block.timestamp,
+                "transactions" : transactions,
+                "proof": block.proof,
+                "previous_hash": block.previous_hash,
+            })
+
+        return chain
+
+    async def new_block(self, session: AsyncSession, proof :int, previous_hash:str) -> dict:
         """
         Creates a new block and adds it to the chain
-        :param proof: <int> The proof given by the proof of work algorithm
-        :param previous_hash: (Optional) <str> Hash of previous block
-        :return: <dict> New block
         """
-        block={
-            'index': len(self.chain) + 1,
-            'timestamp': datetime.utcnow().isoformat(),
-            'transactions': self.current_transactions,
-            'proof': proof,
-            'previous_hash': previous_hash or self.hash(self.chain[-1])
+        block = Block(proof=proof, previous_hash=previous_hash)
+        session.add(block)
+        await session.flush()
+        result = await session.execute(select(Transaction).where(Transaction.block_id.is_(None)))
+        pending = result.scalars().all()
+
+        for transaction in pending:
+            transaction.block_id = block.id
+
+        await session.commit()
+        await session.refresh(block)
+
+        transactions = [
+            {
+                "sender" : t.sender,
+                "recipient" : t.recipient,
+                "amount" : t.amount,
+                "signatur" : t.signature,
+            }
+            for t in pending
+        ]
+
+        return {
+            "index" : block.id,
+            "transactions" : transactions,
         }
-        self.current_transactions = []
-        self.chain.append(block)
-        return block
 
 
-    def new_transaction(self, sender, recipient, amount, signature):
+    async def new_transaction(self, session : AsyncSession, sender:str, recipient:str, amount:float
+                              , signature: str ) -> int:
         """
         Creates a new transaction to go into the next mined block
-        :param sender: <str> sender's address'
-        :param recipient: <str> recipient's address'
-        :param amount: <int> amount of money
-        :return: <int> index of the  block which holds the new transaction
         """
-        transaction = {
-            'sender': sender,
-            'recipient': recipient,
-            'amount': amount,
-            'signature' : signature
-        }
         if sender != "0":
-            self.sign_transaction(signature, transaction)
+            sender_wallet = await session.get(Wallet, sender)
+            if sender_wallet is None:
+                raise ValueError("Wallet doesn't exist")
+            if sender_wallet < amount:
+                raise ValueError("Sender must be greater than amount")
+            sender_wallet.balance -= amount
 
-        self.current_transactions.append(transaction)
+        recipient_wallet = await session.get(Wallet, recipient)
+        if recipient_wallet is None:
+            recipient_wallet = Wallet(public_key=recipient, balance=0.0)
+            session.add(recipient_wallet)
 
-        if sender in self.wallets:
-            self.wallets[sender]['transactions'].append(transaction)
-            self.wallets[sender]['balance'] -= amount
+        recipient_wallet.balance += amount
 
-        if recipient in self.wallets:
-            self.wallets[recipient]['transactions'].append(transaction)
-            self.wallets[recipient]['balance'] += amount
+        new_transaction = Transaction(sender=sender, recipient=recipient,
+                        amount=amount, signature=signature, block_id=None)
 
-        return self.last_block['index'] + 1
+        session.add(new_transaction)
 
-    def get_transaction(self, recipient):
-        """
-        Used to get a particular transaction send to a recipent
-        :param recipient: <str> recipient address
-        :return: <dict> the transaction
-        """
+        result = await session.execute(
+            select(Block.id).order_by(Block.id.desc()).limit(1)
+        )
 
-        for transaction in self.current_transactions:
-            if transaction['recipient'] == recipient:
-                return transaction
+        last_block_id = result.scalar_one_or_none()
+        last_index = (last_block_id or 0) + 1
+
+        await session.commit()
+
+        return last_index
 
     @staticmethod
-    def hash(block):
+    def hash(block : dict) -> str:
         """
         Creates a SHA-256 hash of a block
         :param block: <dict> Block
@@ -90,17 +128,18 @@ class BlockChain(object):
         block_string = json.dumps(block, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
-    @property
-    def last_block(self):
-        return self.chain[-1]
 
-    def proof_of_work(self, last_proof):
+    async def last_block(self, session : AsyncSession) -> dict | None:
+        chain = await self.get_chain(session)
+        if not chain:
+            return None
+        return chain[-1]
+
+    def proof_of_work(self, last_proof:int)-> bool:
         """
         Simple Proof of Work Algorithm :
         -Finds a number p' such that hash(pp') contains leading 4 zeroes, where
         - p is the previous proof, and p' is the new proof
-        :param last_proof: <int> Last proof given by the proof of work
-        :return: <int> New proof given by the proof of work
         """
 
         proof = 0
@@ -110,7 +149,7 @@ class BlockChain(object):
         return proof
 
     @staticmethod
-    def valid_proof(last_proof, proof):
+    def valid_proof(last_proof:int, proof:int) -> bool:
         """
         Validates the proof: Does hash(last_proof, proof) contain leading 4 zeroes?
         :param last_proof: <int> Previous proof
@@ -122,17 +161,32 @@ class BlockChain(object):
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == '0000'
 
-    def register_node(self, address):
+    async def register_node(self, session: AsyncSession, address:str) -> None:
         """
         Adds a new node to the list of nodes
         :param address: <str> Address of the node, Eg: 'http://127.0.0.1:5001'
         :return: None
         """
         parsed_url = urlparse(address)
-        self.nodes.add(parsed_url.netloc)
+        netloc = parsed_url.netloc
+
+        if not netloc:
+            raise ValueError("Invalid URL")
+
+        result = await session.execute(select(Node).where(Node.address == netloc))
+
+        existing_node = result.scalar_one_or_none()
+
+        if existing_node is None:
+            session.add(Node(address=netloc))
+            await session.commit()
+
+    async def get_nodes(self, session : AsyncSession) -> list[str]:
+        result = await session.execute(select(Node).order_by(Node.address))
+        return [row[0] for row in result.scalars().all()]
 
 
-    def valid_chain(self, chain):
+    async def valid_chain(self, chain: list[dict]) -> bool:
         """
         Determine if the given blockchain is valid by matching the hashes and validating the proofs of work
         :param chain: <list> A blockchain
@@ -144,9 +198,6 @@ class BlockChain(object):
 
         while current_index < len(chain):
             block = chain[current_index]
-            print(f'{last_block}')
-            print(f'{block}')
-            print("\n---------------------\n")
 
             #validating the block
             if block['previous_hash'] != self.hash(last_block):
@@ -160,16 +211,46 @@ class BlockChain(object):
 
         return True
 
-    async def resolve_conflicts(self) -> bool:
+    async def replace_chain(self, session: AsyncSession, new_chain) -> None:
+        "Resolves chain conflicts and replaces them with new chain"
+
+        await session.execute(delete(Transaction))
+        await session.execute(delete(Block))
+        await session.commit()
+
+        for block in new_chain:
+            block = Block(
+                proof=block['proof'],
+                previous_hash=block['previous_hash'],
+                timestamp=block['timestamp'],
+            )
+            session.add(block)
+            await session.flush()
+
+        for transaction in block.get('transactions', []):
+            session.add(
+                Transaction(
+                    block_id= block.id,
+                    sender=transaction['sender'],
+                    recipient=transaction['recipient'],
+                    amount=transaction['amount'],
+                    signature=transaction['signature'],
+                )
+            )
+        await session.commit()
+
+
+    async def resolve_conflicts(self, session : AsyncSession) -> bool:
         """
         This is our Consensus algorithm. It resolves conflicts
         by replacing our chain with the longest one in the chain.
         :return: <bool> True if the chain was repalced, False otherwise
         """
 
-        neighbours = self.nodes
-        new_chain = None
-        max_length = len(self.chain)
+        neighbours = await self.get_nodes(session)
+        current_chain = await self.get_chain(session)
+        new_chain: list[dict] | None = None
+        max_length = len(current_chain)
 
         #Verification of nodes
 
@@ -199,12 +280,12 @@ class BlockChain(object):
 
 
         if new_chain is not None:
-            self.chain = new_chain
+            await self.replace_chain(session, new_chain)
             return True
 
         return False
 
-    def create_wallets(self):
+    def create_wallets(self) -> tuple(str,str):
         """"
         A function which helps to generate public and private key to create wallets
         """
@@ -230,17 +311,10 @@ class BlockChain(object):
                     .replace("-----END RSA PRIVATE KEY-----","")\
                     .replace("\n","")
 
-
-        self.wallets [public_pem] = {
-            "private_key": private_pem,
-            "transactions" : [],
-            "balance" : 0
-        }
-
         return public_pem, private_pem
 
     @staticmethod
-    def sign_transaction(private_key:str,transaction:dict) :
+    def sign_transaction(private_key:str,transaction:dict) -> str :
         """
             This function is used to sign a transaction
             @param private_key: <str> Private key
@@ -261,7 +335,7 @@ class BlockChain(object):
                              hashes.SHA256()
                              )
 
-        transaction['signature'] = signature.hex()
+        return signature.hex()
 
     @staticmethod
     def verify_transaction(public_key:str, transaction:dict, signature: str) -> bool:
@@ -285,11 +359,3 @@ class BlockChain(object):
         except Exception as e:
             print(f'Exception: {e}')
             return False
-
-    def get_wallets(self):
-        """
-        A function used to return wallet info
-        :param public_key: PEM encoded public key
-        :return: the balance of the wallet and transactions
-        """
-        return self.wallets
