@@ -25,7 +25,6 @@ class Transaction(Base):
     recipient = Column(Text, nullable=False)
     amount = Column(Float, nullable=False)
     signature = Column(Text, nullable=True)
-
     block = relationship("Block", back_populates="transactions")
 
 class Wallet(Base):
@@ -36,7 +35,6 @@ class Wallet(Base):
 
 class Node(Base):
     __tablename__ = "nodes"
-
     id = Column(Integer, primary_key=True, index=True)
     address = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

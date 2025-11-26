@@ -2,8 +2,7 @@
 This file contains the api endpoints build using REST through Fastapi
 
 """
-import uuid
-from uuid import uuid4
+
 from fastapi import FastAPI,HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
