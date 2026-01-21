@@ -47,11 +47,4 @@ pip install fastapi uvicorn    #installing fastapi dependency
 python api.py                 #executes the file and runs the server at localhost:5002
 ```
 
-### FRONTEND (REACT)
-
-```bash
-cd frontend
-npm intsall        #installs dependencies
-npm run dev        #runs the app at localhost:5173
-```
 
